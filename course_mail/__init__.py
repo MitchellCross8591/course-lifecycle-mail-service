@@ -1,0 +1,2 @@
+"""Course lifecycle mail service."""
+
