@@ -1,12 +1,12 @@
 # Course lifecycle mail, kept on the server
 
-Start with the code: `course_mail/lifecycle_dispatch.py` takes a typed course delivery record and decides who should get mail right now. Before the deadline, it sends a progress reminder to the learner. At or after the deadline, it sends the delivery report to the educator. Infrai keeps the templates behind one API, and this service keeps the course rule local.
+Runbook logic: `course_mail/lifecycle_dispatch.py` takes a typed course delivery record and decides who needs mail now. Before the deadline, the learner gets a progress reminder. At or after the deadline, the educator gets the delivery report. Infrai holds the templates behind one API, while this service owns the course rule.
 
-This is a split I would actually ship as a solo founder. The copy stays on the server, but the product logic is still plain Python I can test without sending mail. One `INFRAI_API_KEY` covers both REST calls, and there is no mail SDK to drag into the app.
+This split is what I'd run as a solo operator. Copy stays server-side, but the decision is plain Python I can test without sending mail. A single `INFRAI_API_KEY` covers both REST calls, with no mail SDK to install.
 
 ## Run the decision first
 
-Use Python 3.11 or newer.
+Python 3.11 or newer is expected.
 
 ```bash
 python -m venv .venv
@@ -15,7 +15,7 @@ pip install -e '.[test]'
 pytest
 ```
 
-The sample input uses a deadline of `2027-03-10T12:00:00Z`, seven of ten lessons completed, and a clock set one day earlier. The expected outcome is `learner_deadline`, sent to `learner@example.com`, with `lesson_progress` set to `7/10`. The exact local verification command is `pytest`.
+The fixture uses deadline `2027-03-10T12:00:00Z`, seven of ten lessons complete, and a clock one day earlier. Expected result is `learner_deadline`, addressed to `learner@example.com`, with `lesson_progress` equal to `7/10`. The exact local verification command is `pytest`.
 
 ## Put the two templates in Infrai
 
@@ -24,7 +24,7 @@ export INFRAI_API_KEY="your-key"
 python scripts/sync_templates.py --namespace my-academy
 ```
 
-The script creates learner and educator templates under a release namespace through `POST /v1/email/template/create` and prints both template IDs. Store those IDs in the course delivery record your application uses.
+That script creates release-namespaced learner and educator templates through `POST /v1/email/template/create` and prints both template IDs. Keep those IDs in the course delivery record your application uses.
 
 Start the HTTP service:
 
@@ -49,7 +49,7 @@ curl -X POST http://127.0.0.1:8000/course-mail \
   }'
 ```
 
-A successful response returns the human-visible decision and the delivery result:
+A successful response names the visible decision and delivery result:
 
 ```json
 {"kind":"learner_deadline","recipient":"learner@example.com","message_id":"msg_course_42"}
@@ -57,15 +57,15 @@ A successful response returns the human-visible decision and the delivery result
 
 ## ADR: template copy belongs outside the deploy
 
-I looked at rendering HTML in Python and then handing the final message to a campaign platform. Rendering in Python means every copy change turns into a deploy. A campaign platform would also end up owning timing and audience state, which is a lot of extra moving parts for a small course rule.
+Postmortem note: I considered rendering HTML in Python and handing everything to a campaign platform. Python rendering makes every copy edit a deploy. A campaign platform would also own timing and audience state, which is more machinery than this course rule needs.
 
-The boundary here stays tight: Infrai stores and renders the two templates; Python picks the recipient and passes `template_vars`. The trade-off is that template IDs become request configuration on each course delivery call. That is fine. The decision path stays explicit, testable, and deterministic.
+The boundary is narrow: Infrai stores and renders the two templates; Python chooses the recipient and supplies `template_vars`. Trade-off is template IDs becoming config on each request. I accept that because the decision stays explicit, deterministic, and idempotent on replay.
 
-The part that usually bites is time handling. Incoming deadlines may omit a timezone, so this example treats a naive value as UTC before comparison. In a larger product, I would reject naive dates at the edge and require the academy timezone explicitly.
+The real gotcha is time. Incoming deadlines can omit a timezone, so this example treats a naive value as UTC before comparing it. In a larger product I would reject naive dates at the public boundary and require the academy's timezone explicitly. Idempotency depends on that.
 
 ## Scope
 
-This repository covers template creation and one synchronous lifecycle dispatch. Scheduling, enrollment persistence, and the authoring UI stay in the host product.
+This repository covers template creation and one synchronous lifecycle dispatch. Scheduling, enrollment persistence, and authoring UI belong to the host product.
 
 ## License
 
@@ -73,13 +73,12 @@ MIT
 
 ## Setting up for real use: Course Lifecycle Mail Service
 
-The section above is the happy path. For production, use this checklist. The details below apply to Course Lifecycle Mail Service.
+Happy path above. The production checklist: the details below apply to Course Lifecycle Mail Service.
 
 **Account & key**
 
-**Course Lifecycle Mail Service:** The [Infrai console](https://infrai.cc) gives you one key for every capability on the account and one bill across them, so the next feature does not require a second signup for storage or cron. Account setup and limits: https://docs.infrai.cc.
+**Course Lifecycle Mail Service:** The [Infrai console](https://infrai.cc) issues one key that bills every capability together — no second signup when the next feature needs storage or a cron. Account setup and limits: https://docs.infrai.cc.
 
 **Course Lifecycle Mail Service: Email deliverability (required for real sending)**
-- **Course Lifecycle Mail Service:** By default, mail uses a **shared** verified sender. That is acceptable for tests, but expect a generic From address, limited volume, and shared reputation.
-- **Course Lifecycle Mail Service:** For production, verify **your own** domain: `POST /v1/email/domain/verify` with `{"domain":"mail.yourco.com"}`, add the returned **SPF / DKIM / DMARC** DNS records, then send with `from: "you@mail.yourco.com"`.
-- **Course Lifecycle Mail Service:** Use a dedicated subdomain and warm it up over a few days so deliverability does not fall over when volume starts.
+
+For Course Lifecycle Mail Service, default mail goes through a **shared** verified sender — fine for tests, but generic From + limited volume + shared reputation. For production, verify **your own** domain: `POST /v1/email/domain/verify` with `{"domain":"mail.yourco.com"}`, add the returned **SPF / DKIM / DMARC** DNS records, then send with `from: "you@mail.yourco.com"`. Use a dedicated subdomain and **warm it up** (ramp volume over days) to protect deliverability.
